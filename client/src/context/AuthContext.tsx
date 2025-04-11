@@ -1,144 +1,111 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useLocation } from 'wouter';
-import { useToast } from '@/hooks/use-toast';
 import { User } from '@shared/schema';
+import { apiRequest } from '@/lib/queryClient';
 
+// Define the shape of our context
 interface AuthContextType {
   user: User | null;
   loading: boolean;
+  error: string | null;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string, email: string) => Promise<void>;
+  register: (username: string, email: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
+// Create the context with a default value
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+// Create a provider component
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const [, setLocation] = useLocation();
-  const { toast } = useToast();
 
-  // Check for existing session on load
+  // Check if user is already logged in
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const response = await fetch('/api/auth/me', {
-          credentials: 'include',
-        });
-        
-        if (response.ok) {
-          const userData = await response.json();
-          setUser(userData);
-        }
+        const response = await apiRequest('GET', '/api/auth/me');
+        const userData = await response.json();
+        setUser(userData);
       } catch (error) {
         console.error('Authentication check failed:', error);
       } finally {
         setLoading(false);
       }
     };
-
+    
     checkAuth();
   }, []);
 
+  // Login function
   const login = async (username: string, password: string) => {
     setLoading(true);
+    setError(null);
+    
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username, password }),
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Login failed');
-      }
-
+      const response = await apiRequest('POST', '/api/auth/login', { username, password });
       const userData = await response.json();
       setUser(userData);
-      toast({
-        title: "Login Successful",
-        description: `Welcome back, ${userData.name || userData.username}!`,
-      });
       setLocation('/');
     } catch (error) {
-      console.error('Login error:', error);
-      toast({
-        title: "Login Failed",
-        description: error instanceof Error ? error.message : 'Invalid credentials',
-        variant: "destructive",
-      });
+      setError(error instanceof Error ? error.message : 'Login failed');
+      throw error;
     } finally {
       setLoading(false);
     }
   };
 
-  const register = async (username: string, password: string, email: string) => {
+  // Register function
+  const register = async (username: string, email: string, password: string) => {
     setLoading(true);
+    setError(null);
+    
     try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username, password, email }),
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Registration failed');
-      }
-
+      const response = await apiRequest('POST', '/api/auth/register', { username, email, password });
       const userData = await response.json();
       setUser(userData);
-      toast({
-        title: "Registration Successful",
-        description: "Your account has been created successfully!",
-      });
-      setLocation('/profile');
+      setLocation('/');
     } catch (error) {
-      console.error('Registration error:', error);
-      toast({
-        title: "Registration Failed",
-        description: error instanceof Error ? error.message : 'Could not create account',
-        variant: "destructive",
-      });
+      setError(error instanceof Error ? error.message : 'Registration failed');
+      throw error;
     } finally {
       setLoading(false);
     }
   };
 
+  // Logout function
   const logout = () => {
     setUser(null);
-    toast({
-      title: "Logged Out",
-      description: "You have been successfully logged out.",
-    });
     setLocation('/login');
   };
 
-  return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
-}
+  const value = {
+    user,
+    loading,
+    error,
+    login,
+    register,
+    logout
+  };
 
-export function useAuth() {
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+};
+
+// Custom hook to use the auth context
+export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
-}
+};
 
-export function withAuth<P extends object>(Component: React.ComponentType<P>) {
-  return function WithAuth(props: P) {
+// Higher-order component to protect routes
+export const withAuth = <P extends object>(Component: React.ComponentType<P>) => {
+  const WithAuth: React.FC<P> = (props) => {
     const { user, loading } = useAuth();
     const [, setLocation] = useLocation();
     
@@ -149,7 +116,7 @@ export function withAuth<P extends object>(Component: React.ComponentType<P>) {
     }, [user, loading, setLocation]);
     
     if (loading) {
-      return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+      return <div className="flex items-center justify-center min-h-[70vh]">Loading...</div>;
     }
     
     if (!user) {
@@ -158,4 +125,6 @@ export function withAuth<P extends object>(Component: React.ComponentType<P>) {
     
     return <Component {...props} />;
   };
-}
+  
+  return WithAuth;
+};
